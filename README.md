@@ -9,3 +9,5 @@
  ```AZW3_PC_DeDRM thebooktobedecrpyt.azw```
  
 请确保安装了相应版本的Kindle for PC。
+
+原版DeDRMTools将提取完成用户信息保存于C:\Users\username\AppData\Local\DeDRMPrefs，在本精简版中将被保存在运行目录下，请注意不要暴露自己的隐私。

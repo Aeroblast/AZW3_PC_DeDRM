@@ -1,4 +1,3 @@
-
 import sys
 import os
 import re
@@ -11,9 +10,12 @@ add_cp65001_codec()
 set_utf8_default_encoding()
 
 infile=sys.argv[1]
-outdir=''
+if  not os.path.isfile(infile):
+    print 'Input file not exist!'
+    exit()
+outdir=os.path.dirname(infile)
 
-kindlekeyfile=sys.path[0]+'/kindlekey.k4i'
+kindlekeyfile=os.path.dirname(os.path.realpath(sys.argv[0]))+'\kindlekey.k4i'
 
 
 if not os.path.exists(kindlekeyfile):
