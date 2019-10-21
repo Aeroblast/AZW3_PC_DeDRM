@@ -201,7 +201,7 @@ def GetDecryptedBook(infile, kDatabases, androidFiles, serials, pids, starttime 
         mb = topazextract.TopazBook(infile)
 
     bookname = unescape(mb.getBookTitle())
-    print u"Decrypting {1} ebook: {0}".format(bookname, mb.getBookType())
+    print u"Decrypting {0} ebook".format(mb.getBookType())
 
     # copy list of pids
     totalpids = list(pids)
@@ -269,12 +269,12 @@ def decryptBook(infile, outdir, kDatabaseFiles, androidFiles, serials, pids):
     outfile = os.path.join(outdir, outfilename + book.getBookExtension())
 
     book.getFile(outfile)
-    print u"Saved decrypted book {1:s} after {0:.1f} seconds".format(time.time()-starttime, outfilename)
+    print u"Saved decrypted book after {0:.1f} seconds".format(time.time()-starttime)
 
     if book.getBookType()==u"Topaz":
         zipname = os.path.join(outdir, outfilename + u"_SVG.zip")
         book.getSVGZip(zipname)
-        print u"Saved SVG ZIP Archive for {1:s} after {0:.1f} seconds".format(time.time()-starttime, outfilename)
+        print u"Saved SVG ZIP Archive for after {0:.1f} seconds".format(time.time()-starttime)
 
     # remove internal temporary directory of Topaz pieces
     book.cleanup()

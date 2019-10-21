@@ -23,7 +23,8 @@ if not os.path.exists(kindlekeyfile):
     try:
         kindlekey.getkey(kindlekeyfile)
     except:
-        pass
+        print 'Get Key Failed'
+        exit()
         
 pidnums = []
 serialnums = []
