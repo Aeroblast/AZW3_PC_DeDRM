@@ -257,6 +257,7 @@ def decryptBook(infile, outdir, kDatabaseFiles, androidFiles, serials, pids):
         re.match('^{0-9A-F-}{36}$', orig_fn_root)
     ):  # Kindle for PC / Mac / Android / Fire / iOS
         clean_title = cleanup_name(book.getBookTitle())
+        clean_title=''
         outfilename = '{}_{}'.format(orig_fn_root, clean_title)
     else:  # E Ink Kindle, which already uses a reasonable name
         outfilename = orig_fn_root
@@ -265,7 +266,7 @@ def decryptBook(infile, outdir, kDatabaseFiles, androidFiles, serials, pids):
     if len(outfilename)>150:
         outfilename = outfilename[:99]+"--"+outfilename[-49:]
 
-    outfilename = outfilename+u"_nodrm"
+    outfilename = outfilename+u"nodrm"
     outfile = os.path.join(outdir, outfilename + book.getBookExtension())
 
     book.getFile(outfile)
