@@ -4,10 +4,10 @@
 from __future__ import with_statement
 
 # kindlekey.py
-# Copyright © 2008-2017 Apprentice Harper et al.
+# Copyright © 2008-2020 Apprentice Harper et al.
 
 __license__ = 'GPL v3'
-__version__ = '2.5'
+__version__ = '2.7'
 
 # Revision history:
 #  1.0   - Kindle info file decryption, extracted from k4mobidedrm, etc.
@@ -28,6 +28,8 @@ __version__ = '2.5'
 #  2.3   - Added more field names thanks to concavegit's KFX code.
 #  2.4   - Fix for complex Mac disk setups, thanks to Tibs
 #  2.5   - Final Fix for Windows user names with non-ascii characters, thanks to oneofusoneofus
+#  2.6   - Start adding support for Kindle 1.25+ .kinf2018 file
+#  2.7   - Finish .kinf2018 support, PC & Mac by Apprentice Sakuya
 
 
 """
@@ -35,9 +37,15 @@ Retrieve Kindle for PC/Mac user key.
 """
 
 import sys, os, re
-from struct import pack, unpack, unpack_from
+from struct import pack, unpack
 import json
 import getopt
+
+try:
+    RegError
+except NameError:
+    class RegError(Exception):
+        pass
 
 # Routines common to Mac and PC
 
@@ -124,25 +132,27 @@ def SHA256(message):
     return ctx.digest()
 
 # For K4M/PC 1.6.X and later
-# generate table of prime number less than or equal to int n
 def primes(n):
-    if n==2: return [2]
-    elif n<2: return []
-    s=range(3,n+1,2)
-    mroot = n ** 0.5
-    half=(n+1)/2-1
-    i=0
-    m=3
-    while m <= mroot:
-        if s[i]:
-            j=(m*m-3)/2
-            s[j]=0
-            while j<half:
-                s[j]=0
-                j+=m
-        i=i+1
-        m=2*i+3
-    return [2]+[x for x in s if x]
+    """
+    Return a list of prime integers smaller than or equal to n
+    :param n: int
+    :return: list->int
+    """
+    if n == 2:
+        return [2]
+    elif n < 2:
+        return []
+    primeList = [2]
+
+    for potentialPrime in range(3, n + 1, 2):
+        isItPrime = True
+        for prime in primeList:
+            if potentialPrime % prime == 0:
+                isItPrime = False
+        if isItPrime is True:
+            primeList.append(potentialPrime)
+
+    return primeList
 
 # Encode the bytes in data with the characters in map
 def encode(data, map):
@@ -198,7 +208,7 @@ if iswindows:
             Original Version
             Copyright (c) 2002 by Paul A. Lambert
             Under:
-            CryptoPy Artisitic License Version 1.0
+            CryptoPy Artistic License Version 1.0
             See the wonderful pure python package cryptopy-1.2.5
             and read its LICENSE.txt for complete license details.
         """
@@ -971,6 +981,13 @@ if iswindows:
             # Probably not the best. To Fix (shouldn't ignore in encoding) or use utf-8
             print(u'searching for kinfoFiles in ' + path.encode('ascii', 'ignore'))
 
+            # look for (K4PC 1.25.1 and later) .kinf2018 file
+            kinfopath = path +'\\Amazon\\Kindle\\storage\\.kinf2018'
+            if os.path.isfile(kinfopath):
+                found = True
+                print('Found K4PC 1.25+ kinf2018 file: ' + kinfopath.encode('ascii','ignore'))
+                kInfoFiles.append(kinfopath)
+                
             # look for (K4PC 1.9.0 and later) .kinf2011 file
             kinfopath = path +'\\Amazon\\Kindle\\storage\\.kinf2011'
             if os.path.isfile(kinfopath):
@@ -1034,7 +1051,7 @@ if iswindows:
         DB = {}
         with open(kInfoFile, 'rb') as infoReader:
             data = infoReader.read()
-        # assume newest .kinf2011 style .kinf file
+        # assume .kinf2011 or .kinf2018 style .kinf file
         # the .kinf file uses "/" to separate it into records
         # so remove the trailing "/" to make it easy to use split
         data = data[:-1]
@@ -1048,8 +1065,17 @@ if iswindows:
         # now extract the pieces that form the added entropy
         pattern = re.compile(r'''\[Version:(\d+)\]\[Build:(\d+)\]\[Cksum:([^\]]+)\]\[Guid:([\{\}a-z0-9\-]+)\]''', re.IGNORECASE)
         for m in re.finditer(pattern, cleartext):
-            added_entropy = m.group(2) + m.group(4)
+            version = int(m.group(1))
+            build = m.group(2)
+            guid = m.group(4)
 
+        if version == 5:  # .kinf2011
+            added_entropy = build + guid
+        elif version == 6:  # .kinf2018
+            salt = str(0x6d8 * int(build)) + guid
+            sp = GetUserName() + '+@#$%+' + GetIDString()
+            passwd = encode(SHA256(sp), charMap5)
+            key = KeyIVGen().pbkdf2(passwd, salt, 10000, 0x400)[:32]  # this is very slow
 
         # loop through the item records until all are processed
         while len(items) > 0:
@@ -1060,10 +1086,6 @@ if iswindows:
             # the first 32 chars of the first record of a group
             # is the MD5 hash of the key name encoded by charMap5
             keyhash = item[0:32]
-
-            # the sha1 of raw keyhash string is used to create entropy along
-            # with the added entropy provided above from the headerblob
-            entropy = SHA1(keyhash) + added_entropy
 
             # the remainder of the first record when decoded with charMap5
             # has the ':' split char followed by the string representation
@@ -1112,11 +1134,29 @@ if iswindows:
             encdata = encdata + pfx
             #print "rearranged data:",encdata
 
+            if version == 5:
+                # decode using new testMap8 to get the original CryptProtect Data
+                encryptedValue = decode(encdata,testMap8)
+                #print "decoded data:",encryptedValue.encode('hex')
+                entropy = SHA1(keyhash) + added_entropy
+                cleartext = CryptUnprotectData(encryptedValue, entropy, 1)
+            elif version == 6:
+                from Crypto.Cipher import AES
+                from Crypto.Util import Counter
+                # decode using new testMap8 to get IV + ciphertext
+                iv_ciphertext = decode(encdata, testMap8)
+                # pad IV so that we can substitute AES-CTR for GCM
+                iv = iv_ciphertext[:12] + b'\x00\x00\x00\x02'
+                ciphertext = iv_ciphertext[12:]
+                # convert IV to int for use with pycrypto
+                iv_ints = unpack('>QQ', iv)
+                iv = iv_ints[0] << 64 | iv_ints[1]
+                # set up AES-CTR
+                ctr = Counter.new(128, initial_value=iv)
+                cipher = AES.new(key, AES.MODE_CTR, counter=ctr)
+                # decrypt and decode
+                cleartext = decode(cipher.decrypt(ciphertext), charMap5)
 
-            # decode using new testMap8 to get the original CryptProtect Data
-            encryptedValue = decode(encdata,testMap8)
-            #print "decoded data:",encryptedValue.encode('hex')
-            cleartext = CryptUnprotectData(encryptedValue, entropy, 1)
             if len(cleartext)>0:
                 #print "cleartext data:",cleartext,":end data"
                 DB[keyname] = cleartext
@@ -1292,7 +1332,7 @@ elif isosx:
         uuids = []
         uuidnum = os.getenv('MYUUIDNUMBER')
         if uuidnum != None:
-            uuids.append(strip(uuidnum))
+            uuids.append(uuidnum.strip())
         cmdline = '/usr/sbin/ioreg -l -S -w 0 -r -c AppleAHCIDiskDriver'
         cmdline = cmdline.encode(sys.getfilesystemencoding())
         p = subprocess.Popen(cmdline, shell=True, stdin=None, stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=False)
@@ -1409,6 +1449,18 @@ elif isosx:
         kInfoFiles=[]
         found = False
         home = os.getenv('HOME')
+        # check for  .kinf2018 file in new location (App Store Kindle for Mac)
+        testpath = home + '/Library/Containers/com.amazon.Kindle/Data/Library/Application Support/Kindle/storage/.kinf2018'
+        if os.path.isfile(testpath):
+            kInfoFiles.append(testpath)
+            print('Found k4Mac kinf2018 file: ' + testpath)
+            found = True
+        # check for  .kinf2018 files
+        testpath = home + '/Library/Application Support/Kindle/storage/.kinf2018'
+        if os.path.isfile(testpath):
+            kInfoFiles.append(testpath)
+            print('Found k4Mac kinf2018 file: ' + testpath)
+            found = True
         # check for  .kinf2011 file in new location (App Store Kindle for Mac)
         testpath = home + '/Library/Containers/com.amazon.Kindle/Data/Library/Application Support/Kindle/storage/.kinf2011'
         if os.path.isfile(testpath):
@@ -1489,12 +1541,21 @@ elif isosx:
                 cleartext = UnprotectHeaderData(encryptedValue)
 
                 # now extract the pieces in the same way
-                # this version is different from K4PC it scales the build number by multipying by 735
                 pattern = re.compile(r'''\[Version:(\d+)\]\[Build:(\d+)\]\[Cksum:([^\]]+)\]\[Guid:([\{\}a-z0-9\-]+)\]''', re.IGNORECASE)
                 for m in re.finditer(pattern, cleartext):
-                    entropy = str(int(m.group(2)) * 0x2df) + m.group(4)
+                    version = int(m.group(1))
+                    build = m.group(2)
+                    guid = m.group(4)
 
-                cud = CryptUnprotectData(entropy,IDString)
+                if version == 5:  # .kinf2011: identical to K4PC, except the build number gets multiplied
+                    entropy = str(0x2df * int(build)) + guid
+                    cud = CryptUnprotectData(entropy,IDString)
+
+                elif version == 6:  # .kinf2018: identical to K4PC
+                    salt = str(0x6d8 * int(build)) + guid
+                    sp = GetUserName() + '+@#$%+' + IDString
+                    passwd = encode(SHA256(sp), charMap5)
+                    key = LibCrypto().keyivgen(passwd, salt, 10000, 0x400)[:32]
 
                 # loop through the item records until all are processed
                 while len(items) > 0:
@@ -1555,9 +1616,28 @@ elif isosx:
                     encdata = encdata[noffset:]
                     encdata = encdata + pfx
 
-                    # decode using testMap8 to get the CryptProtect Data
-                    encryptedValue = decode(encdata,testMap8)
-                    cleartext = cud.decrypt(encryptedValue)
+                    if version == 5:
+                        # decode using testMap8 to get the CryptProtect Data
+                        encryptedValue = decode(encdata,testMap8)
+                        cleartext = cud.decrypt(encryptedValue)
+
+                    elif version == 6:
+                        from Crypto.Cipher import AES
+                        from Crypto.Util import Counter
+                        # decode using new testMap8 to get IV + ciphertext
+                        iv_ciphertext = decode(encdata, testMap8)
+                        # pad IV so that we can substitute AES-CTR for GCM
+                        iv = iv_ciphertext[:12] + b'\x00\x00\x00\x02'
+                        ciphertext = iv_ciphertext[12:]
+                        # convert IV to int for use with pycrypto
+                        iv_ints = unpack('>QQ', iv)
+                        iv = iv_ints[0] << 64 | iv_ints[1]
+                        # set up AES-CTR
+                        ctr = Counter.new(128, initial_value=iv)
+                        cipher = AES.new(key, AES.MODE_CTR, counter=ctr)
+                        # decrypt and decode
+                        cleartext = decode(cipher.decrypt(ciphertext), charMap5)
+
                     # print keyname
                     # print cleartext
                     if len(cleartext) > 0:
